@@ -1,0 +1,8 @@
+babel~=2.8.0
+python-dateutil==2.6.0
+flask-moment
+flask-wtf
+Flask~=1.1.2
+WTForms~=2.2.1
+flask-sqlalchemy~=2.4.1
+psycopg2-binary
