@@ -12,7 +12,9 @@ import logging
 from logging import Formatter, FileHandler
 from flask_wtf import Form
 from flask_migrate import Migrate
+import sys
 from forms import *
+from models import *
 
 # ----------------------------------------------------------------------------#
 # App Config.
@@ -25,56 +27,6 @@ db = SQLAlchemy(app)
 
 # run flask db init to create migrations folder
 migrate = Migrate(app, db)
-
-
-# ----------------------------------------------------------------------------#
-# Models.
-# ----------------------------------------------------------------------------#
-
-class Venue(db.Model):
-    __tablename__ = 'Venue'
-
-    id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String)
-    city = db.Column(db.String(120))
-    state = db.Column(db.String(120))
-    address = db.Column(db.String(120))
-    phone = db.Column(db.String(120))
-    image_link = db.Column(db.String(500))
-    facebook_link = db.Column(db.String(120))
-
-    genres = db.Column(db.ARRAY(db.String()))
-    website = db.Column(db.String())
-    seeking_talent = db.Column(db.String())
-    seeking_description = db.Column(db.String())
-
-
-class Artist(db.Model):
-    __tablename__ = 'Artist'
-
-    id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String)
-    city = db.Column(db.String(120))
-    state = db.Column(db.String(120))
-    phone = db.Column(db.String(120))
-    genres = db.Column(db.String(120))
-    image_link = db.Column(db.String(500))
-    facebook_link = db.Column(db.String(120))
-
-    website = db.Column(db.String())
-    seeking_venue = db.Column(db.String())
-    seeking_description = db.Column(db.String())
-
-
-class Show(db.Model):
-    __tablename__ = 'Show'
-    id = db.Column(db.Integer, primary_key=True)
-    start_time = db.Column(db.DateTime)
-    venue_id = db.Column(db.Integer, db.ForeignKey('Venue.id'), nullable=False)
-    venue_name = db.relationship('Venue', backref=db.backref('shows'))
-    artist_id = db.Column(db.Integer, db.ForeignKey('Artist.id'), nullable=False)
-    artist = db.relationship('Artist', backref=db.backref('shows'))
-
 
 # ----------------------------------------------------------------------------#
 # Filters.
@@ -99,7 +51,6 @@ app.jinja_env.filters['datetime'] = format_datetime
 @app.route('/')
 def index():
     return render_template('pages/home.html')
-
 
 #  Venues
 #  ----------------------------------------------------------------
@@ -148,7 +99,6 @@ def search_venues():
         "data": data
     }
 
-
     return render_template('pages/search_venues.html', results=response,
                            search_term=request.form.get('search_term', ''))
 
@@ -156,23 +106,22 @@ def search_venues():
 @app.route('/venues/<int:venue_id>')
 def show_venue(venue_id):
     # shows the venue page with the given venue_id
-    venue = db.session.query(Venue).filter(Venue.id == venue_id).one()
+    venue = Venue.query.get(venue_id)
 
-    shows_list = db.session.query(Show).filter(Show.venue_id == venue_id)
+    shows_list = db.session.query(Show).join(Artist).filter(Show.venue_id == venue_id)
     past_shows = []
     upcoming_shows = []
 
     for show in shows_list:
-        artist = db.session.query(Artist.name, Artist.image_link).filter(Artist.id == show.artist_id).one()
         show_add = {
             "artist_id": show.artist_id,
-            "artist_name": artist.name,
-            "artist_image_link": artist.image_link,
+            "artist_name": show.artist.name,
+            "artist_image_link": show.artist.image_link,
             "start_time": show.start_time.strftime('%m/%d/%Y')
         }
 
         if (show.start_time < datetime.now()):
-            # print(past_shows, file=sys.stderr)
+            print(past_shows, file=sys.stderr)
             past_shows.append(show_add)
         else:
             upcoming_shows.append(show_add)
@@ -206,27 +155,21 @@ def create_venue_form():
     form = VenueForm()
     return render_template('forms/new_venue.html', form=form)
 
-
 @app.route('/venues/create', methods=['POST'])
 def create_venue_submission():
     form = VenueForm(request.form)
-
     try:
-        venue = Venue(
+        new_venue = Venue(
             name=form.name.data,
-            genres=form.genres.data,
+            genres=','.join(form.genres.data),
             address=form.address.data,
             city=form.city.data,
             state=form.state.data,
             phone=form.phone.data,
-            website=form.website.data,
             facebook_link=form.facebook_link.data,
-            seeking_talent=form.seeking_talent.data,
-            seeking_description=form.seeking_description.data,
-            image_link=form.image_link.data,
-        )
-        db.session.add(venue)
-        db.session.commit()
+            image_link=form.image_link.data)
+        new_venue.create()
+
         # on successful db insert, flash success
         # flash('Venue ' + request.form['name'] + ' was successfully listed!')
         flash('Venue ' + form.name.data + ' was successfully listed!')
@@ -246,8 +189,9 @@ def delete_venue(venue_id):
     # BONUS CHALLENGE: Implement a button to delete a Venue on a Venue Page, have it so that
     # clicking that button delete it from the db then redirect the user to the homepage
     try:
-        db.session.query(Venue).filter(Venue.id == venue_id).delete()
-        db.session.commit()
+        venue = Venue.query.filter(Venue.id == venue_id).one()
+        venue.delete()
+
         flash('Venue was successfully deleted!')
     except:
         flash('An error occurred. Venue could not be deleted.')
@@ -259,7 +203,6 @@ def delete_venue(venue_id):
 #  ----------------------------------------------------------------
 @app.route('/artists')
 def artists():
-
     data = []
     artists = db.session.query(Artist.id, Artist.name)
     for artist in artists:
@@ -301,17 +244,15 @@ def search_artists():
 def show_artist(artist_id):
     artist = db.session.query(Artist).filter(Artist.id == artist_id).one()
 
-    list_shows = db.session.query(Show).filter(Show.artist_id == artist_id)
+    list_shows = db.session.query(Show).join(Venue).filter(Show.artist_id == artist_id)
     past_shows = []
     upcoming_shows = []
 
     for show in list_shows:
-        venue = db.session.query(Venue.name, Venue.image_link).filter(Venue.id == show.venue_id).one()
-
         show_add = {
             "venue_id": show.venue_id,
-            "venue_name": venue.name,
-            "venue_image_link": venue.image_link,
+            "venue_name": show.venue.name,
+            "venue_image_link": show.venue.image_link,
             "start_time": show.start_time.strftime('%m/%d/%Y')
         }
 
@@ -433,21 +374,21 @@ def create_artist_submission():
     # called upon submitting the new artist listing form
     form = ArtistForm(request.form)
 
-    artist = Artist(
-        name=form.name.data,
-        genres=form.genres.data,
-        city=form.city.data,
-        state=form.state.data,
-        phone=form.phone.data,
-        website=form.website.data,
-        facebook_link=form.facebook_link.data,
-        seeking_venue=form.seeking_venue.data,
-        seeking_description=form.seeking_description.data,
-        image_link=form.image_link.data,
-    )
+
     try:
-        db.session.add(artist)
-        db.session.commit()
+        artist = Artist(
+            name=form.name.data,
+            genres=form.genres.data,
+            city=form.city.data,
+            state=form.state.data,
+            phone=form.phone.data,
+            website=form.website.data,
+            facebook_link=form.facebook_link.data,
+            seeking_venue=form.seeking_venue.data,
+            seeking_description=form.seeking_description.data,
+            image_link=form.image_link.data,
+        )
+        artist.create()
         # on successful db insert, flash success
         flash('Artist ' + form.name.data + ' was successfully listed!')
     except:
@@ -500,8 +441,7 @@ def create_show_submission():
     )
 
     try:
-        db.session.add(show)
-        db.session.commit()
+        show.create()
         # on successful db insert, flash success
         flash('Show was successfully listed')
     except:
